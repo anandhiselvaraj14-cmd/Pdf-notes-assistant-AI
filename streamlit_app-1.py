@@ -1,41 +1,59 @@
 import streamlit as st
-import pymupdf
+import pymupdf  # PyMuPDF
 from google import genai
+import os
 
-st.set_page_config(page_title="AI PDF Notes Assistant", page_icon="📚")
+# Streamlit பக்க வடிவமைப்பு
+st.set_page_config(page_title="AI PDF Notes Assistant", layout="centered")
 st.title("📚 AI PDF Notes Assistant")
-st.write("Upload study notes; AI can summarize, explain, and create quiz questions from the PDF text.")
+st.write("Upload your study PDF and get AI insights instantly!")
 
-pdf = st.file_uploader("Choose a text-based PDF", type=["pdf"])
-if pdf:
-    try:
-        doc = pymupdf.open(stream=pdf.getvalue(), filetype="pdf")
-        text = "\n".join(page.get_text() for page in doc).strip()
-        st.caption(f"Pages: {len(doc)}")
-        if not text:
-            st.warning("Selectable text illa. Scanned PDF-ku OCR innum add pannala.")
-        else:
-            task = st.selectbox("AI enna seyyanum?", ["Summary", "Key points", "Quiz questions", "Explain simply"])
-            if st.button("Generate with AI"):
+# Streamlit Secrets-ல் இருந்து பாதுகாப்பாக API Key-ஐ எடுத்தல்
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+    client = genai.Client(api_key=api_key)
+except Exception as e:
+    st.error("API Key missing! Please add GEMINI_API_KEY in Streamlit Secrets.")
+    st.stop()
+
+# PDF கோப்பை அப்லோடு செய்யும் பகுதி
+uploaded_file = st.file_uploader("Choose a PDF file", type="pdf")
+
+if uploaded_file is not None:
+    # PDF-ல் இருந்து டெக்ஸ்ட்டை பிரித்தெடுத்தல்
+    with st.spinner("Extracting text from PDF..."):
+        text = ""
+        with pymupdf.open(stream=uploaded_file.read(), filetype="pdf") as doc:
+            for page in doc:
+                text += page.get_text()
+    
+    if text.strip() == "":
+        st.warning("No text found in the PDF. Please upload a readable PDF.")
+    else:
+        st.success("Text extracted successfully!")
+        
+        # AI செய்ய வேண்டிய வேலைகளுக்கான ஆப்ஷன்கள்
+        task = st.selectbox(
+            "What would you like the AI to do?",
+            ["Summary", "Key Points", "Quiz Questions", "Simple Explanation"]
+        )
+        
+        if st.button("Generate with AI"):
+            with st.spinner(f"Generating {task}... Please wait..."):
                 try:
-                    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-                    prompts = {
-                        "Summary": "Summarize these study notes in clear simple language. Use only the provided content. Mention uncertainty rather than inventing facts.",
-                        "Key points": "Extract the 8 most important study points from these notes. Use concise bullets and only provided content.",
-                        "Quiz questions": "Create 5 revision questions from these notes, followed by a separate answer key. Use only provided content.",
-                        "Explain simply": "Explain these notes in simple student-friendly language. Keep technical terms and define them. Use only provided content."
-                    }
-                    prompt = prompts[task] + "\n\nNOTES:\n" + text[:18000]
-                    with st.spinner("AI notes-ai process pannudhu..."):
-                        response = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
-                    st.subheader(task)
+                    # பயனரின் தேர்வுக்கு ஏற்ப ப்ராம்ப்ட் அமைத்தல்
+                    prompt = f"Based on the following text, provide a comprehensive {task.lower()}:\n\n{text[:8000]}"
+                    
+                    # Gemini API மூலம் பதிலை உருவாக்குதல்
+                    response = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=prompt,
+                    )
+                    
+                    # பதிலை திரையில் காட்டுதல்
+                    st.markdown(f"### 🤖 AI Generated {task}")
                     st.write(response.text)
-                    st.caption("AI output-la thappu irukkalaam; original PDF-oda compare panni verify pannunga.")
-                except KeyError:
-                    st.error("GEMINI_API_KEY set pannala. Streamlit app Secrets-la API key add pannunga.")
-                except Exception as e:
-                    st.error(f"AI request fail aachu: {e}")
-            with st.expander("Extracted text preview"):
-                st.text(text[:6000])
-    except Exception as e:
-        st.error(f"PDF read panna mudiyala: {e}")
+                    
+                except Exception as ex:
+                    st.error(f"An error occurred with the AI Model: {ex}")
+                    
